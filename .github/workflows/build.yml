@@ -1,0 +1,60 @@
+name: Build & test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS-universal
+          - os: windows-2022
+            name: Windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSAMPLESCOPE_TESTS=ON
+
+      - name: Build tests
+        run: cmake --build build --config Release --target SampleScopeTests --parallel
+
+      - name: Run tests
+        shell: bash
+        run: |
+          BIN=$(find build -type f \( -name SampleScopeTests -o -name SampleScopeTests.exe \) | head -1)
+          "$BIN"
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target SampleScope_VST3 --parallel
+
+      - name: Validate with pluginval
+        shell: bash
+        run: |
+          PLUGIN=$(find build -type d -name SampleScope.vst3 -path "*Release*" | head -1)
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+            unzip -q pv.zip
+            ./pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process "$PLUGIN"
+          else
+            curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
+            unzip -q pv.zip
+            ./pluginval.exe --strictness-level 10 --validate-in-process "$PLUGIN"
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          PLUGIN=$(find build -type d -name SampleScope.vst3 -path "*Release*" | head -1)
+          mkdir -p dist && cp -R "$PLUGIN" dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SampleScope-VST3-${{ matrix.name }}
+          path: dist/
